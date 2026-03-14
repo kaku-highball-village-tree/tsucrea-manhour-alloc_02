@@ -511,15 +511,20 @@ def process_new_rawdata_step0006_from_step0005(
 
     objOutputRows: List[List[str]] = [list(objRow) for objRow in objInputRows]
 
+    iCurrentStaffCode: str = ""
     iRowIndex: int = 0
     while iRowIndex < len(objOutputRows):
         objRow: List[str] = objOutputRows[iRowIndex]
         if len(objRow) < 4:
+            if iCurrentStaffCode != "" and len(objRow) >= 3 and (objRow[2] or "").strip() == "":
+                objRow[2] = iCurrentStaffCode
             iRowIndex += 1
             continue
 
         pszStaffName: str = (objRow[3] or "").strip()
         if pszStaffName == "":
+            if iCurrentStaffCode != "" and len(objRow) >= 3 and (objRow[2] or "").strip() == "":
+                objRow[2] = iCurrentStaffCode
             iRowIndex += 1
             continue
 
@@ -533,28 +538,14 @@ def process_new_rawdata_step0006_from_step0005(
         objRow[4] = "合計"
         objRow[5] = ""
 
-        iTargetIndex: int | None = None
-        iNextIndex: int = iRowIndex + 1
-        if iNextIndex < len(objOutputRows):
-            objNextRow: List[str] = objOutputRows[iNextIndex]
-            pszNextName: str = (objNextRow[3] or "").strip() if len(objNextRow) >= 4 else ""
-            if pszNextName == "":
-                iTargetIndex = iNextIndex
+        objNewDetailRow: List[str] = [""] * max(len(objRow), 6)
+        objNewDetailRow[2] = pszStaffCode
+        objNewDetailRow[4] = pszProjectName
+        objNewDetailRow[5] = pszManhour
+        objOutputRows.insert(iRowIndex + 1, objNewDetailRow)
 
-        if iTargetIndex is None:
-            objNewDetailRow: List[str] = [""] * max(len(objRow), 6)
-            objOutputRows.insert(iRowIndex + 1, objNewDetailRow)
-            iTargetIndex = iRowIndex + 1
-
-        objTargetRow: List[str] = objOutputRows[iTargetIndex]
-        while len(objTargetRow) < 6:
-            objTargetRow.append("")
-
-        objTargetRow[2] = pszStaffCode
-        objTargetRow[4] = pszProjectName
-        objTargetRow[5] = pszManhour
-
-        iRowIndex += 1
+        iCurrentStaffCode = pszStaffCode
+        iRowIndex += 2
 
     objOutputPath: Path = build_new_rawdata_step0006_output_path_from_step0005(objNewRawdataStep0005Path)
     write_sheet_to_tsv(objOutputPath, objOutputRows)
