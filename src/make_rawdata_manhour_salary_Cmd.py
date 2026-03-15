@@ -24,6 +24,7 @@ NEW_RAWDATA_STEP0007_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデ
 NEW_RAWDATA_STEP0008_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0008_\d{4}年\d{2}月\.tsv$")
 NEW_RAWDATA_STEP0009_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0009_\d{4}年\d{2}月\.tsv$")
 NEW_RAWDATA_STEP0010_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0010_\d{4}年\d{2}月\.tsv$")
+NEW_RAWDATA_STEP0011_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0011_\d{4}年\d{2}月\.tsv$")
 SALARY_PAYMENT_DEDUCTION_REQUIRED_HEADERS: tuple[str, ...] = (
     "従業員名",
     "スタッフコード",
@@ -858,6 +859,85 @@ def process_new_rawdata_step0011_from_step0010(
     write_sheet_to_tsv(objOutputPath, objOutputRows)
     return 0
 
+def build_new_rawdata_step0012_output_path_from_step0011(objStep0011Path: Path) -> Path:
+    pszFileName: str = objStep0011Path.name
+    if "_step0011_" not in pszFileName:
+        raise ValueError(f"Input is not step0011 file: {objStep0011Path}")
+    pszOutputFileName: str = pszFileName.replace("_step0011_", "_step0012_", 1)
+    return objStep0011Path.resolve().parent / pszOutputFileName
+
+
+def process_new_rawdata_step0012_from_step0011(
+    objNewRawdataStep0011Path: Path,
+) -> int:
+    objInputRows: List[List[str]] = read_tsv_rows(objNewRawdataStep0011Path)
+    if not objInputRows:
+        raise ValueError(f"Input TSV has no rows: {objNewRawdataStep0011Path}")
+
+    objPrefixRows: List[List[str]] = []
+    iRowIndex: int = 0
+    while iRowIndex < len(objInputRows):
+        objRow: List[str] = objInputRows[iRowIndex]
+        pszStaffName: str = (objRow[3] or "").strip() if len(objRow) >= 4 else ""
+        pszProject: str = (objRow[4] or "").strip() if len(objRow) >= 5 else ""
+        if pszStaffName != "" and pszProject == "合計":
+            break
+        objPrefixRows.append(list(objRow))
+        iRowIndex += 1
+
+    objBlocks: List[tuple[tuple[int, float | str], int, List[List[str]]]] = []
+    iBlockOrder: int = 0
+    while iRowIndex < len(objInputRows):
+        objRow: List[str] = objInputRows[iRowIndex]
+        pszStaffName: str = (objRow[3] or "").strip() if len(objRow) >= 4 else ""
+        pszProject: str = (objRow[4] or "").strip() if len(objRow) >= 5 else ""
+        if not (pszStaffName != "" and pszProject == "合計"):
+            objPrefixRows.append(list(objRow))
+            iRowIndex += 1
+            continue
+
+        iBlockEnd: int = iRowIndex + 1
+        while iBlockEnd < len(objInputRows):
+            objNextRow: List[str] = objInputRows[iBlockEnd]
+            pszNextStaffName: str = (objNextRow[3] or "").strip() if len(objNextRow) >= 4 else ""
+            pszNextProject: str = (objNextRow[4] or "").strip() if len(objNextRow) >= 5 else ""
+            if pszNextStaffName != "" and pszNextProject == "合計":
+                break
+            iBlockEnd += 1
+
+        objBlockRows: List[List[str]] = [list(objBlockRow) for objBlockRow in objInputRows[iRowIndex:iBlockEnd]]
+        pszStaffCodeHead: str = (objRow[1] or "").strip() if len(objRow) >= 2 else ""
+        fSortNumber: float | None = parse_numeric_text(pszStaffCodeHead)
+        if fSortNumber is None:
+            objSortKey: tuple[int, float | str] = (1, pszStaffCodeHead)
+        else:
+            objSortKey = (0, fSortNumber)
+        objBlocks.append((objSortKey, iBlockOrder, objBlockRows))
+        iBlockOrder += 1
+        iRowIndex = iBlockEnd
+
+    objBlocks.sort(key=lambda objItem: (objItem[0], objItem[1]))
+
+    objOutputRows: List[List[str]] = list(objPrefixRows)
+    for _, _, objBlockRows in objBlocks:
+        objOutputRows.extend(objBlockRows)
+
+    objOutputPath: Path = build_new_rawdata_step0012_output_path_from_step0011(objNewRawdataStep0011Path)
+    write_sheet_to_tsv(objOutputPath, objOutputRows)
+    return 0
+
+
+def process_new_rawdata_step0011_and_step0012_from_step0010(
+    objNewRawdataStep0010Path: Path,
+) -> int:
+    process_new_rawdata_step0011_from_step0010(objNewRawdataStep0010Path)
+    process_new_rawdata_step0012_from_step0011(
+        build_new_rawdata_step0011_output_path_from_step0010(objNewRawdataStep0010Path)
+    )
+    return 0
+
+
+
 def fill_missing_staff_codes_in_new_rawdata_step0002_by_management_accounting(
     objNewRawdataStep0002Path: Path,
     objStaffCodeByName: dict[str, str],
@@ -1327,7 +1407,9 @@ def main() -> int:
     objNewRawdataStep0008Paths: List[Path] = []
     objNewRawdataStep0009Paths: List[Path] = []
     objNewRawdataStep0010Paths: List[Path] = []
+    objNewRawdataStep0011Paths: List[Path] = []
     objManagementAccountingCandidatePaths: List[Path] = []
+
 
 
     for pszInputXlsxPath in objArgs.pszInputXlsxPaths:
@@ -1358,6 +1440,8 @@ def main() -> int:
             objNewRawdataStep0009Paths.append(objResolvedInputPath)
         if NEW_RAWDATA_STEP0010_FILE_PATTERN.match(objResolvedInputPath.name) is not None:
             objNewRawdataStep0010Paths.append(objResolvedInputPath)
+        if NEW_RAWDATA_STEP0011_FILE_PATTERN.match(objResolvedInputPath.name) is not None:
+            objNewRawdataStep0011Paths.append(objResolvedInputPath)
 
         if objResolvedInputPath.suffix.lower() in (".tsv", ".csv", ".xlsx"):
             objManagementAccountingCandidatePaths.append(objResolvedInputPath)
@@ -1439,7 +1523,7 @@ def main() -> int:
                                 build_new_rawdata_step0009_output_path_from_step0008(objNewRawdataStep0008Path),
                                 objSalaryStep0001Paths[0],
                             )
-                            process_new_rawdata_step0011_from_step0010(
+                            process_new_rawdata_step0011_and_step0012_from_step0010(
                                 build_new_rawdata_step0010_output_path_from_step0009(
                                     build_new_rawdata_step0009_output_path_from_step0008(objNewRawdataStep0008Path)
                                 )
@@ -1494,7 +1578,7 @@ def main() -> int:
                         build_new_rawdata_step0009_output_path_from_step0008(objNewRawdataStep0008Path),
                         objSalaryStep0001Paths[0],
                     )
-                    process_new_rawdata_step0011_from_step0010(
+                    process_new_rawdata_step0011_and_step0012_from_step0010(
                         build_new_rawdata_step0010_output_path_from_step0009(
                             build_new_rawdata_step0009_output_path_from_step0008(objNewRawdataStep0008Path)
                         )
@@ -1543,7 +1627,7 @@ def main() -> int:
                         build_new_rawdata_step0009_output_path_from_step0008(objNewRawdataStep0008Path),
                         objSalaryStep0001Paths[0],
                     )
-                    process_new_rawdata_step0011_from_step0010(
+                    process_new_rawdata_step0011_and_step0012_from_step0010(
                         build_new_rawdata_step0010_output_path_from_step0009(
                             build_new_rawdata_step0009_output_path_from_step0008(objNewRawdataStep0008Path)
                         )
@@ -1585,7 +1669,7 @@ def main() -> int:
                         build_new_rawdata_step0009_output_path_from_step0008(objNewRawdataStep0008Path),
                         objSalaryStep0001Paths[0],
                     )
-                    process_new_rawdata_step0011_from_step0010(
+                    process_new_rawdata_step0011_and_step0012_from_step0010(
                         build_new_rawdata_step0010_output_path_from_step0009(
                             build_new_rawdata_step0009_output_path_from_step0008(objNewRawdataStep0008Path)
                         )
@@ -1625,7 +1709,7 @@ def main() -> int:
                         build_new_rawdata_step0009_output_path_from_step0008(objNewRawdataStep0008Path),
                         objSalaryStep0001Paths[0],
                     )
-                    process_new_rawdata_step0011_from_step0010(
+                    process_new_rawdata_step0011_and_step0012_from_step0010(
                         build_new_rawdata_step0010_output_path_from_step0009(
                             build_new_rawdata_step0009_output_path_from_step0008(objNewRawdataStep0008Path)
                         )
@@ -1659,7 +1743,7 @@ def main() -> int:
                         build_new_rawdata_step0009_output_path_from_step0008(objNewRawdataStep0008Path),
                         objSalaryStep0001Paths[0],
                     )
-                    process_new_rawdata_step0011_from_step0010(
+                    process_new_rawdata_step0011_and_step0012_from_step0010(
                         build_new_rawdata_step0010_output_path_from_step0009(
                             build_new_rawdata_step0009_output_path_from_step0008(objNewRawdataStep0008Path)
                         )
@@ -1692,7 +1776,7 @@ def main() -> int:
                         build_new_rawdata_step0009_output_path_from_step0008(objNewRawdataStep0008Path),
                         objSalaryStep0001Paths[0],
                     )
-                    process_new_rawdata_step0011_from_step0010(
+                    process_new_rawdata_step0011_and_step0012_from_step0010(
                         build_new_rawdata_step0010_output_path_from_step0009(
                             build_new_rawdata_step0009_output_path_from_step0008(objNewRawdataStep0008Path)
                         )
@@ -1721,7 +1805,7 @@ def main() -> int:
                         objNewRawdataStep0009Path,
                         objSalaryStep0001Paths[0],
                     )
-                    process_new_rawdata_step0011_from_step0010(
+                    process_new_rawdata_step0011_and_step0012_from_step0010(
                         build_new_rawdata_step0010_output_path_from_step0009(objNewRawdataStep0009Path)
                     )
                     objHandledInputPaths.add(objNewRawdataStep0009Path.resolve())
@@ -1740,12 +1824,29 @@ def main() -> int:
             if objNewRawdataStep0010Path.resolve() in objHandledInputPaths:
                 continue
             try:
-                process_new_rawdata_step0011_from_step0010(objNewRawdataStep0010Path)
+                process_new_rawdata_step0011_and_step0012_from_step0010(objNewRawdataStep0010Path)
                 objHandledInputPaths.add(objNewRawdataStep0010Path.resolve())
             except Exception as objException:
                 print(
                     "Error: failed to process step0011 from step0010: {0}. Detail = {1}".format(
                         objNewRawdataStep0010Path,
+                        objException,
+                    )
+                )
+                iExitCode = 1
+
+
+    if objNewRawdataStep0011Paths:
+        for objNewRawdataStep0011Path in objNewRawdataStep0011Paths:
+            if objNewRawdataStep0011Path.resolve() in objHandledInputPaths:
+                continue
+            try:
+                process_new_rawdata_step0012_from_step0011(objNewRawdataStep0011Path)
+                objHandledInputPaths.add(objNewRawdataStep0011Path.resolve())
+            except Exception as objException:
+                print(
+                    "Error: failed to process step0012 from step0011: {0}. Detail = {1}".format(
+                        objNewRawdataStep0011Path,
                         objException,
                     )
                 )
