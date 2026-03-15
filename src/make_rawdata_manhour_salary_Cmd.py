@@ -4,6 +4,7 @@ import argparse
 import csv
 import re
 from datetime import date, datetime, time, timedelta
+from decimal import Decimal, InvalidOperation, ROUND_FLOOR
 from pathlib import Path
 from typing import List
 
@@ -22,6 +23,7 @@ NEW_RAWDATA_STEP0006_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデ
 NEW_RAWDATA_STEP0007_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0007_\d{4}年\d{2}月\.tsv$")
 NEW_RAWDATA_STEP0008_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0008_\d{4}年\d{2}月\.tsv$")
 NEW_RAWDATA_STEP0009_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0009_\d{4}年\d{2}月\.tsv$")
+NEW_RAWDATA_STEP0010_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0010_\d{4}年\d{2}月\.tsv$")
 SALARY_PAYMENT_DEDUCTION_REQUIRED_HEADERS: tuple[str, ...] = (
     "従業員名",
     "スタッフコード",
@@ -725,6 +727,137 @@ def process_new_rawdata_step0010_from_step0009_and_salary_step0001(
     write_sheet_to_tsv(objOutputPath, objOutputRows)
     return 0
 
+
+
+def build_new_rawdata_step0011_output_path_from_step0010(objStep0010Path: Path) -> Path:
+    pszFileName: str = objStep0010Path.name
+    if "_step0010_" not in pszFileName:
+        raise ValueError(f"Input is not step0010 file: {objStep0010Path}")
+    pszOutputFileName: str = pszFileName.replace("_step0010_", "_step0011_", 1)
+    return objStep0010Path.resolve().parent / pszOutputFileName
+
+
+def parse_decimal_text(pszText: str) -> Decimal | None:
+    pszValue: str = (pszText or "").strip()
+    if pszValue == "":
+        return None
+    try:
+        return Decimal(pszValue)
+    except InvalidOperation:
+        return None
+
+
+def count_decimal_places(pszText: str) -> int:
+    pszValue: str = (pszText or "").strip()
+    if "." not in pszValue:
+        return 0
+    return len(pszValue.split(".", 1)[1])
+
+
+def format_scaled_units(iUnits: int, iScaleDigits: int) -> str:
+    if iScaleDigits <= 0:
+        return str(iUnits)
+    iSign: str = "-" if iUnits < 0 else ""
+    iAbsUnits: int = abs(iUnits)
+    iScale: int = 10 ** iScaleDigits
+    iIntegerPart: int = iAbsUnits // iScale
+    iFractionPart: int = iAbsUnits % iScale
+    pszFraction: str = f"{iFractionPart:0{iScaleDigits}d}".rstrip("0")
+    if pszFraction == "":
+        return f"{iSign}{iIntegerPart}"
+    return f"{iSign}{iIntegerPart}.{pszFraction}"
+
+
+def process_new_rawdata_step0011_from_step0010(
+    objNewRawdataStep0010Path: Path,
+) -> int:
+    objInputRows: List[List[str]] = read_tsv_rows(objNewRawdataStep0010Path)
+    if not objInputRows:
+        raise ValueError(f"Input TSV has no rows: {objNewRawdataStep0010Path}")
+
+    objOutputRows: List[List[str]] = [list(objRow) for objRow in objInputRows]
+
+    iRowIndex: int = 0
+    while iRowIndex < len(objOutputRows):
+        objSummaryRow: List[str] = objOutputRows[iRowIndex]
+        pszStaffName: str = (objSummaryRow[3] or "").strip() if len(objSummaryRow) >= 4 else ""
+        pszProject: str = (objSummaryRow[4] or "").strip() if len(objSummaryRow) >= 5 else ""
+        if pszStaffName == "" or pszProject != "合計":
+            iRowIndex += 1
+            continue
+
+        iNextSummaryIndex: int = iRowIndex + 1
+        objDetailIndices: List[int] = []
+        while iNextSummaryIndex < len(objOutputRows):
+            objCandidateRow: List[str] = objOutputRows[iNextSummaryIndex]
+            pszCandidateName: str = (objCandidateRow[3] or "").strip() if len(objCandidateRow) >= 4 else ""
+            pszCandidateProject: str = (objCandidateRow[4] or "").strip() if len(objCandidateRow) >= 5 else ""
+            if pszCandidateName != "" and pszCandidateProject == "合計":
+                break
+            if pszCandidateName == "":
+                objDetailIndices.append(iNextSummaryIndex)
+            iNextSummaryIndex += 1
+
+        if objDetailIndices and len(objSummaryRow) > 6:
+            objWeights: List[int] = []
+            for iDetailIndex in objDetailIndices:
+                objDetailRow: List[str] = objOutputRows[iDetailIndex]
+                pszManhour: str = (objDetailRow[5] or "").strip() if len(objDetailRow) >= 6 else ""
+                if pszManhour == "":
+                    objWeights.append(0)
+                    continue
+                try:
+                    objWeights.append(parse_time_text_to_seconds(pszManhour))
+                except Exception:
+                    objWeights.append(0)
+
+            iWeightTotal: int = sum(objWeights)
+            for iColumnIndex in range(6, len(objSummaryRow)):
+                pszTotalText: str = objSummaryRow[iColumnIndex] if iColumnIndex < len(objSummaryRow) else ""
+                objTotalValue: Decimal | None = parse_decimal_text(pszTotalText)
+                if objTotalValue is None:
+                    continue
+
+                iScaleDigits: int = count_decimal_places(pszTotalText)
+                iScale: int = 10 ** iScaleDigits
+                objAbsTotalScaled: Decimal = (abs(objTotalValue) * Decimal(iScale)).quantize(Decimal("1"))
+                iTotalScaledUnits: int = int(objAbsTotalScaled)
+
+                objAllocatedUnits: List[int] = [0] * len(objDetailIndices)
+                if iWeightTotal > 0 and iTotalScaledUnits > 0:
+                    objFloors: List[int] = []
+                    objRemainders: List[tuple[int, Decimal]] = []
+                    for iIndex, iWeight in enumerate(objWeights):
+                        if iWeight <= 0:
+                            objFloors.append(0)
+                            objRemainders.append((iIndex, Decimal("-1")))
+                            continue
+                        objRaw: Decimal = Decimal(iTotalScaledUnits) * Decimal(iWeight) / Decimal(iWeightTotal)
+                        objFloorValue: Decimal = objRaw.to_integral_value(rounding=ROUND_FLOOR)
+                        iFloor: int = int(objFloorValue)
+                        objFloors.append(iFloor)
+                        objRemainders.append((iIndex, objRaw - objFloorValue))
+
+                    iFloorSum: int = sum(objFloors)
+                    iRemaining: int = iTotalScaledUnits - iFloorSum
+                    objRemainders.sort(key=lambda objItem: (-objItem[1], objItem[0]))
+                    for iIndex, _ in objRemainders[:iRemaining]:
+                        objFloors[iIndex] += 1
+                    objAllocatedUnits = objFloors
+
+                iSign: int = -1 if objTotalValue < 0 else 1
+                for iIndex, iDetailIndex in enumerate(objDetailIndices):
+                    objDetailRow: List[str] = objOutputRows[iDetailIndex]
+                    while len(objDetailRow) <= iColumnIndex:
+                        objDetailRow.append("")
+                    objDetailRow[iColumnIndex] = format_scaled_units(iSign * objAllocatedUnits[iIndex], iScaleDigits)
+
+        iRowIndex = iNextSummaryIndex
+
+    objOutputPath: Path = build_new_rawdata_step0011_output_path_from_step0010(objNewRawdataStep0010Path)
+    write_sheet_to_tsv(objOutputPath, objOutputRows)
+    return 0
+
 def fill_missing_staff_codes_in_new_rawdata_step0002_by_management_accounting(
     objNewRawdataStep0002Path: Path,
     objStaffCodeByName: dict[str, str],
@@ -1193,6 +1326,7 @@ def main() -> int:
     objNewRawdataStep0007Paths: List[Path] = []
     objNewRawdataStep0008Paths: List[Path] = []
     objNewRawdataStep0009Paths: List[Path] = []
+    objNewRawdataStep0010Paths: List[Path] = []
     objManagementAccountingCandidatePaths: List[Path] = []
 
 
@@ -1222,6 +1356,8 @@ def main() -> int:
             objNewRawdataStep0008Paths.append(objResolvedInputPath)
         if NEW_RAWDATA_STEP0009_FILE_PATTERN.match(objResolvedInputPath.name) is not None:
             objNewRawdataStep0009Paths.append(objResolvedInputPath)
+        if NEW_RAWDATA_STEP0010_FILE_PATTERN.match(objResolvedInputPath.name) is not None:
+            objNewRawdataStep0010Paths.append(objResolvedInputPath)
 
         if objResolvedInputPath.suffix.lower() in (".tsv", ".csv", ".xlsx"):
             objManagementAccountingCandidatePaths.append(objResolvedInputPath)
@@ -1303,6 +1439,11 @@ def main() -> int:
                                 build_new_rawdata_step0009_output_path_from_step0008(objNewRawdataStep0008Path),
                                 objSalaryStep0001Paths[0],
                             )
+                            process_new_rawdata_step0011_from_step0010(
+                                build_new_rawdata_step0010_output_path_from_step0009(
+                                    build_new_rawdata_step0009_output_path_from_step0008(objNewRawdataStep0008Path)
+                                )
+                            )
                         objHandledInputPaths.add(objNewRawdataStep0005Path.resolve())
                         objHandledInputPaths.add(objNewRawdataStep0006Path.resolve())
                         objHandledInputPaths.add(objNewRawdataStep0002Path.resolve())
@@ -1353,6 +1494,11 @@ def main() -> int:
                         build_new_rawdata_step0009_output_path_from_step0008(objNewRawdataStep0008Path),
                         objSalaryStep0001Paths[0],
                     )
+                    process_new_rawdata_step0011_from_step0010(
+                        build_new_rawdata_step0010_output_path_from_step0009(
+                            build_new_rawdata_step0009_output_path_from_step0008(objNewRawdataStep0008Path)
+                        )
+                    )
                 objHandledInputPaths.add(objNewRawdataStep0003Path.resolve())
                 objHandledInputPaths.add(objNewRawdataStep0004Path.resolve())
                 objHandledInputPaths.add(objNewRawdataStep0005Path.resolve())
@@ -1397,6 +1543,11 @@ def main() -> int:
                         build_new_rawdata_step0009_output_path_from_step0008(objNewRawdataStep0008Path),
                         objSalaryStep0001Paths[0],
                     )
+                    process_new_rawdata_step0011_from_step0010(
+                        build_new_rawdata_step0010_output_path_from_step0009(
+                            build_new_rawdata_step0009_output_path_from_step0008(objNewRawdataStep0008Path)
+                        )
+                    )
                 objHandledInputPaths.add(objNewRawdataStep0004Path.resolve())
                 objHandledInputPaths.add(objNewRawdataStep0005Path.resolve())
             except Exception as objException:
@@ -1434,6 +1585,11 @@ def main() -> int:
                         build_new_rawdata_step0009_output_path_from_step0008(objNewRawdataStep0008Path),
                         objSalaryStep0001Paths[0],
                     )
+                    process_new_rawdata_step0011_from_step0010(
+                        build_new_rawdata_step0010_output_path_from_step0009(
+                            build_new_rawdata_step0009_output_path_from_step0008(objNewRawdataStep0008Path)
+                        )
+                    )
                 objHandledInputPaths.add(objNewRawdataStep0005Path.resolve())
                 objHandledInputPaths.add(objNewRawdataStep0006Path.resolve())
             except Exception as objException:
@@ -1469,6 +1625,11 @@ def main() -> int:
                         build_new_rawdata_step0009_output_path_from_step0008(objNewRawdataStep0008Path),
                         objSalaryStep0001Paths[0],
                     )
+                    process_new_rawdata_step0011_from_step0010(
+                        build_new_rawdata_step0010_output_path_from_step0009(
+                            build_new_rawdata_step0009_output_path_from_step0008(objNewRawdataStep0008Path)
+                        )
+                    )
                 objHandledInputPaths.add(objNewRawdataStep0006Path.resolve())
             except Exception as objException:
                 print(
@@ -1498,6 +1659,11 @@ def main() -> int:
                         build_new_rawdata_step0009_output_path_from_step0008(objNewRawdataStep0008Path),
                         objSalaryStep0001Paths[0],
                     )
+                    process_new_rawdata_step0011_from_step0010(
+                        build_new_rawdata_step0010_output_path_from_step0009(
+                            build_new_rawdata_step0009_output_path_from_step0008(objNewRawdataStep0008Path)
+                        )
+                    )
                 objHandledInputPaths.add(objNewRawdataStep0007Path.resolve())
             except Exception as objException:
                 print(
@@ -1526,6 +1692,11 @@ def main() -> int:
                         build_new_rawdata_step0009_output_path_from_step0008(objNewRawdataStep0008Path),
                         objSalaryStep0001Paths[0],
                     )
+                    process_new_rawdata_step0011_from_step0010(
+                        build_new_rawdata_step0010_output_path_from_step0009(
+                            build_new_rawdata_step0009_output_path_from_step0008(objNewRawdataStep0008Path)
+                        )
+                    )
                     objHandledInputPaths.add(objNewRawdataStep0008Path.resolve())
                 except Exception as objException:
                     print(
@@ -1550,6 +1721,9 @@ def main() -> int:
                         objNewRawdataStep0009Path,
                         objSalaryStep0001Paths[0],
                     )
+                    process_new_rawdata_step0011_from_step0010(
+                        build_new_rawdata_step0010_output_path_from_step0009(objNewRawdataStep0009Path)
+                    )
                     objHandledInputPaths.add(objNewRawdataStep0009Path.resolve())
                 except Exception as objException:
                     print(
@@ -1559,6 +1733,23 @@ def main() -> int:
                         )
                     )
                     iExitCode = 1
+
+
+    if objNewRawdataStep0010Paths:
+        for objNewRawdataStep0010Path in objNewRawdataStep0010Paths:
+            if objNewRawdataStep0010Path.resolve() in objHandledInputPaths:
+                continue
+            try:
+                process_new_rawdata_step0011_from_step0010(objNewRawdataStep0010Path)
+                objHandledInputPaths.add(objNewRawdataStep0010Path.resolve())
+            except Exception as objException:
+                print(
+                    "Error: failed to process step0011 from step0010: {0}. Detail = {1}".format(
+                        objNewRawdataStep0010Path,
+                        objException,
+                    )
+                )
+                iExitCode = 1
 
 
     for pszInputXlsxPath in objArgs.pszInputXlsxPaths:
