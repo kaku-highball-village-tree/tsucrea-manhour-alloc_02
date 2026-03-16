@@ -213,6 +213,43 @@ def build_step0004_output_path_from_step0003(objStep0003Path: Path) -> Path:
     pszOutputFileName: str = pszFileName.replace("_step0003_", "_step0004_", 1)
     return objStep0003Path.resolve().parent / pszOutputFileName
 
+
+
+def build_step0005_output_path_from_step0004(objStep0004Path: Path) -> Path:
+    pszFileName: str = objStep0004Path.name
+    if "_step0004_" not in pszFileName:
+        raise ValueError(f"Input is not step0004 file: {objStep0004Path}")
+    pszOutputFileName: str = pszFileName.replace("_step0004_", "_step0005_", 1)
+    return objStep0004Path.resolve().parent / pszOutputFileName
+
+
+def parse_h_mm_ss_text_to_seconds(pszText: str) -> int | None:
+    pszValue: str = (pszText or "").strip()
+    if pszValue == "":
+        return None
+
+    objMatch = re.match(r"^(\d+):(\d{2}):(\d{2})$", pszValue)
+    if objMatch is not None:
+        iHours: int = int(objMatch.group(1))
+        iMinutes: int = int(objMatch.group(2))
+        iSeconds: int = int(objMatch.group(3))
+        return iHours * 3600 + iMinutes * 60 + iSeconds
+
+    objMatch = re.match(r"^(\d+):(\d{2})$", pszValue)
+    if objMatch is not None:
+        iHours = int(objMatch.group(1))
+        iMinutes = int(objMatch.group(2))
+        return iHours * 3600 + iMinutes * 60
+
+    return None
+
+
+def format_seconds_as_h_mm_ss(iTotalSeconds: int) -> str:
+    iHours: int = iTotalSeconds // 3600
+    iMinutes: int = (iTotalSeconds % 3600) // 60
+    iSeconds: int = iTotalSeconds % 60
+    return f"{iHours}:{iMinutes:02d}:{iSeconds:02d}"
+
 def normalize_project_name_for_step0003(pszProjectName: str) -> str:
     pszNormalized: str = (pszProjectName or "").replace("\t", "_")
     pszNormalized = re.sub(r"(P\d{5})(?![ _\t　【])", r"\1_", pszNormalized)
@@ -274,6 +311,36 @@ def process_step0004_from_step0003(objStep0003Path: Path) -> int:
     objOutputRows.sort(key=lambda objRow: (objRow[0] or "").strip() if len(objRow) >= 1 else "")
 
     objOutputPath: Path = build_step0004_output_path_from_step0003(objStep0003Path)
+    write_sheet_to_tsv(objOutputPath, objOutputRows)
+    process_step0005_from_step0004(objOutputPath)
+    return 0
+
+
+
+def process_step0005_from_step0004(objStep0004Path: Path) -> int:
+    objRows: List[List[str]] = read_tsv_rows(objStep0004Path)
+
+    objTotalSecondsByProject: dict[str, int] = {}
+    for objRow in objRows:
+        pszProjectName: str = (objRow[0] or "").strip() if len(objRow) >= 1 else ""
+        if pszProjectName == "":
+            continue
+
+        pszManhour: str = (objRow[1] or "").strip() if len(objRow) >= 2 else ""
+        iSeconds = parse_h_mm_ss_text_to_seconds(pszManhour)
+        if iSeconds is None:
+            continue
+
+        if pszProjectName not in objTotalSecondsByProject:
+            objTotalSecondsByProject[pszProjectName] = 0
+        objTotalSecondsByProject[pszProjectName] += iSeconds
+
+    objOutputRows: List[List[str]] = [
+        [pszProjectName, format_seconds_as_h_mm_ss(iTotalSeconds)]
+        for pszProjectName, iTotalSeconds in objTotalSecondsByProject.items()
+    ]
+
+    objOutputPath: Path = build_step0005_output_path_from_step0004(objStep0004Path)
     write_sheet_to_tsv(objOutputPath, objOutputRows)
     return 0
 
