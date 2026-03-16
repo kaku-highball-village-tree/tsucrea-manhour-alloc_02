@@ -239,6 +239,12 @@ def process_tsv_input(objResolvedInputPath: Path) -> int:
     objOutputPath = build_h_mm_ss_output_path_from_input_tsv(objResolvedInputPath)
     objConvertedRows: List[List[str]] = convert_manhour_mm_ss_to_h_mm_ss_rows(objRows)
     write_sheet_to_tsv(objOutputPath, objConvertedRows)
+
+    objConvertedOutputRows: List[List[str]] = read_tsv_rows(objOutputPath)
+    if is_jobcan_long_format_tsv(objConvertedOutputRows):
+        objStep0001OutputPath: Path = build_step0001_output_path_from_manhour_tsv(objResolvedInputPath)
+        write_sheet_to_tsv(objStep0001OutputPath, objConvertedOutputRows)
+
     return 0
 
 
