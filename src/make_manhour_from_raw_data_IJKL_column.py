@@ -12,6 +12,7 @@ INVALID_FILE_CHARS_PATTERN: re.Pattern[str] = re.compile(r'[\\/:*?"<>|]')
 YEAR_MONTH_PATTERN: re.Pattern[str] = re.compile(r"(\d{2})\.(\d{1,2})月")
 DURATION_TEXT_PATTERN: re.Pattern[str] = re.compile(r"^\s*(\d+)\s+day(?:s)?,\s*(\d+):(\d{2}):(\d{2})\s*$")
 TIME_TEXT_PATTERN: re.Pattern[str] = re.compile(r"^\d+:\d{2}:\d{2}$")
+MM_SS_PATTERN: re.Pattern[str] = re.compile(r"^(\d{1,2}):(\d{2})$")
 
 
 def build_candidate_paths(pszInputPath: str) -> List[Path]:
@@ -185,16 +186,59 @@ def build_step0001_output_path_from_manhour_tsv(objInputPath: Path) -> Path:
     return objInputPath.resolve().with_name(pszOutputFileName)
 
 
+def is_fourth_column_manhour_mm_ss_tsv(objRows: List[List[str]]) -> bool:
+    objNonEmptyRows: List[List[str]] = [
+        objRow for objRow in objRows if any(not is_blank_text(pszCell) for pszCell in objRow)
+    ]
+    if not objNonEmptyRows:
+        return False
+
+    iTotal: int = len(objNonEmptyRows)
+    iMmSsRows: int = 0
+    for objRow in objNonEmptyRows:
+        if len(objRow) < 4:
+            continue
+        pszTimeText: str = (objRow[3] or "").strip()
+        if MM_SS_PATTERN.match(pszTimeText) is not None:
+            iMmSsRows += 1
+    return iMmSsRows / iTotal >= 0.5
+
+
+def build_h_mm_ss_output_path_from_input_tsv(objInputPath: Path) -> Path:
+    return objInputPath.resolve().with_name(f"{objInputPath.stem}_h_mm_ss.tsv")
+
+
+def convert_manhour_mm_ss_to_h_mm_ss_rows(objRows: List[List[str]]) -> List[List[str]]:
+    objConvertedRows: List[List[str]] = []
+    for objRow in objRows:
+        objNewRow: List[str] = list(objRow)
+        if len(objNewRow) >= 4:
+            pszManhour: str = (objNewRow[3] or "").strip()
+            objMatch = MM_SS_PATTERN.match(pszManhour)
+            if objMatch is not None:
+                iMinutes: int = int(objMatch.group(1))
+                iSeconds: int = int(objMatch.group(2))
+                objNewRow[3] = f"0:{iMinutes:02d}:{iSeconds:02d}"
+        objConvertedRows.append(objNewRow)
+    return objConvertedRows
+
+
 def process_tsv_input(objResolvedInputPath: Path) -> int:
     objRows: List[List[str]] = read_tsv_rows(objResolvedInputPath)
     if len(objRows) < 2:
         raise ValueError(f"Input TSV has too few rows: {objResolvedInputPath}")
 
-    if not is_jobcan_long_format_tsv(objRows):
+    if is_jobcan_long_format_tsv(objRows):
+        objOutputPath: Path = build_step0001_output_path_from_manhour_tsv(objResolvedInputPath)
+        write_sheet_to_tsv(objOutputPath, objRows)
+        return 0
+
+    if not is_fourth_column_manhour_mm_ss_tsv(objRows):
         raise ValueError(f"Unsupported TSV format: {objResolvedInputPath}")
 
-    objOutputPath: Path = build_step0001_output_path_from_manhour_tsv(objResolvedInputPath)
-    write_sheet_to_tsv(objOutputPath, objRows)
+    objOutputPath = build_h_mm_ss_output_path_from_input_tsv(objResolvedInputPath)
+    objConvertedRows: List[List[str]] = convert_manhour_mm_ss_to_h_mm_ss_rows(objRows)
+    write_sheet_to_tsv(objOutputPath, objConvertedRows)
     return 0
 
 
