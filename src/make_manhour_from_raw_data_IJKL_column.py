@@ -204,6 +204,15 @@ def build_step0003_output_path_from_step0002(objStep0002Path: Path) -> Path:
     return objStep0002Path.resolve().parent / pszOutputFileName
 
 
+
+
+def build_step0004_output_path_from_step0003(objStep0003Path: Path) -> Path:
+    pszFileName: str = objStep0003Path.name
+    if "_step0003_" not in pszFileName:
+        raise ValueError(f"Input is not step0003 file: {objStep0003Path}")
+    pszOutputFileName: str = pszFileName.replace("_step0003_", "_step0004_", 1)
+    return objStep0003Path.resolve().parent / pszOutputFileName
+
 def normalize_project_name_for_step0003(pszProjectName: str) -> str:
     pszNormalized: str = (pszProjectName or "").replace("\t", "_")
     pszNormalized = re.sub(r"(P\d{5})(?![ _\t　【])", r"\1_", pszNormalized)
@@ -255,7 +264,19 @@ def process_step0003_from_step0002(objStep0002Path: Path) -> int:
 
     objOutputPath: Path = build_step0003_output_path_from_step0002(objStep0002Path)
     write_sheet_to_tsv(objOutputPath, objOutputRows)
+    process_step0004_from_step0003(objOutputPath)
     return 0
+
+
+def process_step0004_from_step0003(objStep0003Path: Path) -> int:
+    objRows: List[List[str]] = read_tsv_rows(objStep0003Path)
+    objOutputRows: List[List[str]] = [list(objRow) for objRow in objRows]
+    objOutputRows.sort(key=lambda objRow: (objRow[0] or "").strip() if len(objRow) >= 1 else "")
+
+    objOutputPath: Path = build_step0004_output_path_from_step0003(objStep0003Path)
+    write_sheet_to_tsv(objOutputPath, objOutputRows)
+    return 0
+
 def is_fourth_column_manhour_mm_ss_tsv(objRows: List[List[str]]) -> bool:
     objNonEmptyRows: List[List[str]] = [
         objRow for objRow in objRows if any(not is_blank_text(pszCell) for pszCell in objRow)
