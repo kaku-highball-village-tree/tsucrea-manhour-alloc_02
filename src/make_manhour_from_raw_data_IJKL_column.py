@@ -12,7 +12,7 @@ INVALID_FILE_CHARS_PATTERN: re.Pattern[str] = re.compile(r'[\\/:*?"<>|]')
 YEAR_MONTH_PATTERN: re.Pattern[str] = re.compile(r"(\d{2})\.(\d{1,2})月")
 DURATION_TEXT_PATTERN: re.Pattern[str] = re.compile(r"^\s*(\d+)\s+day(?:s)?,\s*(\d+):(\d{2}):(\d{2})\s*$")
 TIME_TEXT_PATTERN: re.Pattern[str] = re.compile(r"^\d+:\d{2}:\d{2}$")
-MM_SS_PATTERN: re.Pattern[str] = re.compile(r"^(\d{1,2}):(\d{2})$")
+HM_PATTERN: re.Pattern[str] = re.compile(r"^(\d+):(\d{2})$")
 
 
 def build_candidate_paths(pszInputPath: str) -> List[Path]:
@@ -344,7 +344,7 @@ def process_step0005_from_step0004(objStep0004Path: Path) -> int:
     write_sheet_to_tsv(objOutputPath, objOutputRows)
     return 0
 
-def is_fourth_column_manhour_mm_ss_tsv(objRows: List[List[str]]) -> bool:
+def is_fourth_column_manhour_h_mm_tsv(objRows: List[List[str]]) -> bool:
     objNonEmptyRows: List[List[str]] = [
         objRow for objRow in objRows if any(not is_blank_text(pszCell) for pszCell in objRow)
     ]
@@ -352,31 +352,31 @@ def is_fourth_column_manhour_mm_ss_tsv(objRows: List[List[str]]) -> bool:
         return False
 
     iTotal: int = len(objNonEmptyRows)
-    iMmSsRows: int = 0
+    iHmRows: int = 0
     for objRow in objNonEmptyRows:
         if len(objRow) < 4:
             continue
         pszTimeText: str = (objRow[3] or "").strip()
-        if MM_SS_PATTERN.match(pszTimeText) is not None:
-            iMmSsRows += 1
-    return iMmSsRows / iTotal >= 0.5
+        if HM_PATTERN.match(pszTimeText) is not None:
+            iHmRows += 1
+    return iHmRows / iTotal >= 0.5
 
 
 def build_h_mm_ss_output_path_from_input_tsv(objInputPath: Path) -> Path:
     return objInputPath.resolve().with_name(f"{objInputPath.stem}_h_mm_ss.tsv")
 
 
-def convert_manhour_mm_ss_to_h_mm_ss_rows(objRows: List[List[str]]) -> List[List[str]]:
+def convert_manhour_h_mm_to_h_mm_ss_rows(objRows: List[List[str]]) -> List[List[str]]:
     objConvertedRows: List[List[str]] = []
     for objRow in objRows:
         objNewRow: List[str] = list(objRow)
         if len(objNewRow) >= 4:
             pszManhour: str = (objNewRow[3] or "").strip()
-            objMatch = MM_SS_PATTERN.match(pszManhour)
+            objMatch = HM_PATTERN.match(pszManhour)
             if objMatch is not None:
-                iMinutes: int = int(objMatch.group(1))
-                iSeconds: int = int(objMatch.group(2))
-                objNewRow[3] = f"0:{iMinutes:02d}:{iSeconds:02d}"
+                iHours: int = int(objMatch.group(1))
+                iMinutes: int = int(objMatch.group(2))
+                objNewRow[3] = f"{iHours}:{iMinutes:02d}:00"
         objConvertedRows.append(objNewRow)
     return objConvertedRows
 
@@ -392,11 +392,11 @@ def process_tsv_input(objResolvedInputPath: Path) -> int:
         process_step0002_from_step0001(objOutputPath)
         return 0
 
-    if not is_fourth_column_manhour_mm_ss_tsv(objRows):
+    if not is_fourth_column_manhour_h_mm_tsv(objRows):
         raise ValueError(f"Unsupported TSV format: {objResolvedInputPath}")
 
     objOutputPath = build_h_mm_ss_output_path_from_input_tsv(objResolvedInputPath)
-    objConvertedRows: List[List[str]] = convert_manhour_mm_ss_to_h_mm_ss_rows(objRows)
+    objConvertedRows: List[List[str]] = convert_manhour_h_mm_to_h_mm_ss_rows(objRows)
     write_sheet_to_tsv(objOutputPath, objConvertedRows)
 
     objConvertedOutputRows: List[List[str]] = read_tsv_rows(objOutputPath)
