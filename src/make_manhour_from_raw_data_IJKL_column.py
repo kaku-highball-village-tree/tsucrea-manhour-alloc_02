@@ -186,6 +186,31 @@ def build_step0001_output_path_from_manhour_tsv(objInputPath: Path) -> Path:
     return objInputPath.resolve().with_name(pszOutputFileName)
 
 
+
+
+def build_step0002_output_path_from_step0001(objStep0001Path: Path) -> Path:
+    pszFileName: str = objStep0001Path.name
+    if "_step0001_" not in pszFileName:
+        raise ValueError(f"Input is not step0001 file: {objStep0001Path}")
+    pszOutputFileName: str = pszFileName.replace("_step0001_", "_step0002_", 1)
+    return objStep0001Path.resolve().parent / pszOutputFileName
+
+
+def remove_first_and_third_columns(objRows: List[List[str]]) -> List[List[str]]:
+    objOutputRows: List[List[str]] = []
+    for objRow in objRows:
+        pszSecondColumn: str = objRow[1] if len(objRow) >= 2 else ""
+        pszFourthColumn: str = objRow[3] if len(objRow) >= 4 else ""
+        objOutputRows.append([pszSecondColumn, pszFourthColumn])
+    return objOutputRows
+
+
+def process_step0002_from_step0001(objStep0001Path: Path) -> int:
+    objRows: List[List[str]] = read_tsv_rows(objStep0001Path)
+    objOutputRows: List[List[str]] = remove_first_and_third_columns(objRows)
+    objOutputPath: Path = build_step0002_output_path_from_step0001(objStep0001Path)
+    write_sheet_to_tsv(objOutputPath, objOutputRows)
+    return 0
 def is_fourth_column_manhour_mm_ss_tsv(objRows: List[List[str]]) -> bool:
     objNonEmptyRows: List[List[str]] = [
         objRow for objRow in objRows if any(not is_blank_text(pszCell) for pszCell in objRow)
@@ -231,6 +256,7 @@ def process_tsv_input(objResolvedInputPath: Path) -> int:
     if is_jobcan_long_format_tsv(objRows):
         objOutputPath: Path = build_step0001_output_path_from_manhour_tsv(objResolvedInputPath)
         write_sheet_to_tsv(objOutputPath, objRows)
+        process_step0002_from_step0001(objOutputPath)
         return 0
 
     if not is_fourth_column_manhour_mm_ss_tsv(objRows):
@@ -244,6 +270,7 @@ def process_tsv_input(objResolvedInputPath: Path) -> int:
     if is_jobcan_long_format_tsv(objConvertedOutputRows):
         objStep0001OutputPath: Path = build_step0001_output_path_from_manhour_tsv(objResolvedInputPath)
         write_sheet_to_tsv(objStep0001OutputPath, objConvertedOutputRows)
+        process_step0002_from_step0001(objStep0001OutputPath)
 
     return 0
 
