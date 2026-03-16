@@ -196,6 +196,36 @@ def build_step0002_output_path_from_step0001(objStep0001Path: Path) -> Path:
     return objStep0001Path.resolve().parent / pszOutputFileName
 
 
+def build_step0003_output_path_from_step0002(objStep0002Path: Path) -> Path:
+    pszFileName: str = objStep0002Path.name
+    if "_step0002_" not in pszFileName:
+        raise ValueError(f"Input is not step0002 file: {objStep0002Path}")
+    pszOutputFileName: str = pszFileName.replace("_step0002_", "_step0003_", 1)
+    return objStep0002Path.resolve().parent / pszOutputFileName
+
+
+def normalize_project_name_for_step0003(pszProjectName: str) -> str:
+    pszNormalized: str = (pszProjectName or "").replace("\t", "_")
+    pszNormalized = re.sub(r"(P\d{5})(?![ _\t　【])", r"\1_", pszNormalized)
+    pszNormalized = re.sub(r"([A-OQ-Z]\d{3})(?![ _\t　【])", r"\1_", pszNormalized)
+    pszNormalized = re.sub(r"((?:P\d{5}|[A-OQ-Z]\d{3}))[\u0020\u3000]+", r"\1_", pszNormalized)
+    pszNormalized = re.sub(r"^([A-OQ-Z]\d{3}) +", r"\1_", pszNormalized)
+
+    objMatch = re.match(r"^【([^】]+)】\s*((?:P\d{5}|[A-OQ-Z]\d{3}))(.*)$", pszNormalized)
+    if objMatch is not None:
+        pszTag: str = objMatch.group(1)
+        pszCode: str = objMatch.group(2)
+        pszRest: str = objMatch.group(3)
+        pszRest = re.sub(r"^[\u0020\u3000_]+", "", pszRest)
+        if pszRest != "":
+            pszNormalized = f"{pszCode}_【{pszTag}】{pszRest}"
+        else:
+            pszNormalized = f"{pszCode}_【{pszTag}】"
+
+    pszNormalized = re.sub(r"((?:P\d{5}|[A-OQ-Z]\d{3}))(?=【)", r"\1_", pszNormalized)
+    return pszNormalized
+
+
 def remove_first_and_third_columns(objRows: List[List[str]]) -> List[List[str]]:
     objOutputRows: List[List[str]] = []
     for objRow in objRows:
@@ -209,6 +239,21 @@ def process_step0002_from_step0001(objStep0001Path: Path) -> int:
     objRows: List[List[str]] = read_tsv_rows(objStep0001Path)
     objOutputRows: List[List[str]] = remove_first_and_third_columns(objRows)
     objOutputPath: Path = build_step0002_output_path_from_step0001(objStep0001Path)
+    write_sheet_to_tsv(objOutputPath, objOutputRows)
+    process_step0003_from_step0002(objOutputPath)
+    return 0
+
+
+def process_step0003_from_step0002(objStep0002Path: Path) -> int:
+    objRows: List[List[str]] = read_tsv_rows(objStep0002Path)
+    objOutputRows: List[List[str]] = []
+    for objRow in objRows:
+        objNewRow: List[str] = list(objRow)
+        if len(objNewRow) >= 1:
+            objNewRow[0] = normalize_project_name_for_step0003((objNewRow[0] or "").strip())
+        objOutputRows.append(objNewRow)
+
+    objOutputPath: Path = build_step0003_output_path_from_step0002(objStep0002Path)
     write_sheet_to_tsv(objOutputPath, objOutputRows)
     return 0
 def is_fourth_column_manhour_mm_ss_tsv(objRows: List[List[str]]) -> bool:
