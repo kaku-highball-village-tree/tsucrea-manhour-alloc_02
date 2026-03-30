@@ -986,7 +986,7 @@ def process_new_rawdata_step0013_from_step0012(
         raise ValueError(f"Input TSV has no rows: {objNewRawdataStep0012Path}")
 
     objNontaxCommuteColumns: List[int] = [1, 2, 3, 4, 5, 9]
-    objStatutoryWelfareColumns: List[int] = [1, 2, 3, 4, 5, 24, 25, 26, 27, 28, 29, 30]
+    objStatutoryWelfareColumns: List[int] = [1, 2, 3, 4, 5, 6, 24, 25, 26, 27, 28, 29, 30]
     objExcludedColumns: set[int] = set([8, 9, 21, 23] + list(range(24, 31)))
 
     objStep0013Rows: List[List[str]] = remove_columns_by_1_based_indices(objInputRows, objExcludedColumns)
