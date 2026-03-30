@@ -28,6 +28,7 @@ NEW_RAWDATA_STEP0011_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデ
 NEW_RAWDATA_STEP0013_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0013_\d{4}年\d{2}月\.tsv$")
 NEW_RAWDATA_STEP0013_NONTAX_COMMUTE_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0013_非課税通勤手当_\d{4}年\d{2}月\.tsv$")
 NEW_RAWDATA_STEP0013_STATUTORY_WELFARE_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0013_法定福利費_\d{4}年\d{2}月\.tsv$")
+NEW_RAWDATA_STEP0014_STATUTORY_WELFARE_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0014_法定福利費_\d{4}年\d{2}月\.tsv$")
 SALARY_PAYMENT_DEDUCTION_REQUIRED_HEADERS: tuple[str, ...] = (
     "従業員名",
     "スタッフコード",
@@ -1009,6 +1010,55 @@ def process_new_rawdata_step0013_from_step0012(
     write_sheet_to_tsv(objStep0013Path, objStep0013Rows)
     write_sheet_to_tsv(objStep0013NontaxCommutePath, objStep0013NontaxCommuteRows)
     write_sheet_to_tsv(objStep0013StatutoryWelfarePath, objStep0013StatutoryWelfareRows)
+    process_new_rawdata_step0014_statutory_welfare_from_step0013_statutory_welfare(objStep0013StatutoryWelfarePath)
+    return 0
+
+
+def build_new_rawdata_step0014_statutory_welfare_output_path_from_step0013_statutory_welfare(
+    objStep0013StatutoryWelfarePath: Path,
+) -> Path:
+    pszFileName: str = objStep0013StatutoryWelfarePath.name
+    if "_step0013_法定福利費_" not in pszFileName:
+        raise ValueError(f"Input is not step0013 statutory welfare file: {objStep0013StatutoryWelfarePath}")
+    pszOutputFileName: str = pszFileName.replace("_step0013_法定福利費_", "_step0014_法定福利費_", 1)
+    return objStep0013StatutoryWelfarePath.resolve().parent / pszOutputFileName
+
+
+def process_new_rawdata_step0014_statutory_welfare_from_step0013_statutory_welfare(
+    objStep0013StatutoryWelfarePath: Path,
+) -> int:
+    objInputRows: List[List[str]] = read_tsv_rows(objStep0013StatutoryWelfarePath)
+    if not objInputRows:
+        raise ValueError(f"Input TSV has no rows: {objStep0013StatutoryWelfarePath}")
+
+    objOutputRows: List[List[str]] = []
+    for iRowIndex, objRow in enumerate(objInputRows):
+        objNewRow: List[str] = list(objRow)
+        while len(objNewRow) < 12:
+            objNewRow.append("")
+
+        pszTotalLegalWelfare: str = ""
+        if iRowIndex == 0:
+            pszTotalLegalWelfare = "法定福利費"
+        else:
+            pszStaffName: str = (objNewRow[3] or "").strip()
+            pszProjectName: str = (objNewRow[4] or "").strip()
+            if pszStaffName != "" and pszProjectName == "合計":
+                objTotal: Decimal = Decimal("0")
+                for iColumnIndex in range(5, 12):
+                    objValue: Decimal | None = parse_decimal_text(objNewRow[iColumnIndex] if iColumnIndex < len(objNewRow) else "")
+                    if objValue is not None:
+                        objTotal += objValue
+                iFlooredTotal: int = int(objTotal.to_integral_value(rounding=ROUND_FLOOR))
+                pszTotalLegalWelfare = str(iFlooredTotal)
+
+        objNewRow.insert(12, pszTotalLegalWelfare)
+        objOutputRows.append(objNewRow)
+
+    objOutputPath: Path = build_new_rawdata_step0014_statutory_welfare_output_path_from_step0013_statutory_welfare(
+        objStep0013StatutoryWelfarePath
+    )
+    write_sheet_to_tsv(objOutputPath, objOutputRows)
     return 0
 
 
