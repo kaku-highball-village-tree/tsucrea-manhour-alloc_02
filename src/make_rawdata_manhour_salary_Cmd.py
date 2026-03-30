@@ -25,6 +25,10 @@ NEW_RAWDATA_STEP0008_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデ
 NEW_RAWDATA_STEP0009_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0009_\d{4}年\d{2}月\.tsv$")
 NEW_RAWDATA_STEP0010_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0010_\d{4}年\d{2}月\.tsv$")
 NEW_RAWDATA_STEP0011_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0011_\d{4}年\d{2}月\.tsv$")
+NEW_RAWDATA_STEP0013_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0013_\d{4}年\d{2}月\.tsv$")
+NEW_RAWDATA_STEP0013_NONTAX_COMMUTE_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0013_非課税通勤手当_\d{4}年\d{2}月\.tsv$")
+NEW_RAWDATA_STEP0013_STATUTORY_WELFARE_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0013_法定福利費_\d{4}年\d{2}月\.tsv$")
+NEW_RAWDATA_STEP0014_STATUTORY_WELFARE_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0014_法定福利費_\d{4}年\d{2}月\.tsv$")
 SALARY_PAYMENT_DEDUCTION_REQUIRED_HEADERS: tuple[str, ...] = (
     "従業員名",
     "スタッフコード",
@@ -927,12 +931,155 @@ def process_new_rawdata_step0012_from_step0011(
     return 0
 
 
+def build_new_rawdata_step0013_output_path_from_step0012(objStep0012Path: Path) -> Path:
+    pszFileName: str = objStep0012Path.name
+    if "_step0012_" not in pszFileName:
+        raise ValueError(f"Input is not step0012 file: {objStep0012Path}")
+    pszOutputFileName: str = pszFileName.replace("_step0012_", "_step0013_", 1)
+    return objStep0012Path.resolve().parent / pszOutputFileName
+
+
+def build_new_rawdata_step0013_nontax_commute_output_path_from_step0012(objStep0012Path: Path) -> Path:
+    pszBasePath: Path = build_new_rawdata_step0013_output_path_from_step0012(objStep0012Path)
+    pszFileName: str = pszBasePath.name
+    if "_step0013_" not in pszFileName:
+        raise ValueError(f"Input is not step0013 file: {pszBasePath}")
+    pszOutputFileName: str = pszFileName.replace("_step0013_", "_step0013_非課税通勤手当_", 1)
+    return pszBasePath.resolve().parent / pszOutputFileName
+
+
+def build_new_rawdata_step0013_statutory_welfare_output_path_from_step0012(objStep0012Path: Path) -> Path:
+    pszBasePath: Path = build_new_rawdata_step0013_output_path_from_step0012(objStep0012Path)
+    pszFileName: str = pszBasePath.name
+    if "_step0013_" not in pszFileName:
+        raise ValueError(f"Input is not step0013 file: {pszBasePath}")
+    pszOutputFileName: str = pszFileName.replace("_step0013_", "_step0013_法定福利費_", 1)
+    return pszBasePath.resolve().parent / pszOutputFileName
+
+
+def select_columns_by_1_based_indices(objRows: List[List[str]], objIndices: List[int]) -> List[List[str]]:
+    objOutputRows: List[List[str]] = []
+    for objRow in objRows:
+        objOutputRows.append([
+            objRow[iIndex - 1] if iIndex - 1 < len(objRow) else ""
+            for iIndex in objIndices
+        ])
+    return objOutputRows
+
+
+def remove_columns_by_1_based_indices(objRows: List[List[str]], objExcludedIndices: set[int]) -> List[List[str]]:
+    objOutputRows: List[List[str]] = []
+    for objRow in objRows:
+        objOutputRows.append([
+            pszCell
+            for iIndex, pszCell in enumerate(objRow, start=1)
+            if iIndex not in objExcludedIndices
+        ])
+    return objOutputRows
+
+
+def process_new_rawdata_step0013_from_step0012(
+    objNewRawdataStep0012Path: Path,
+) -> int:
+    objInputRows: List[List[str]] = read_tsv_rows(objNewRawdataStep0012Path)
+    if not objInputRows:
+        raise ValueError(f"Input TSV has no rows: {objNewRawdataStep0012Path}")
+
+    objNontaxCommuteColumns: List[int] = [1, 2, 3, 4, 5, 9]
+    objStatutoryWelfareColumns: List[int] = [1, 2, 3, 4, 5, 6, 24, 25, 26, 27, 28, 29, 30]
+    objExcludedColumns: set[int] = set([8, 9, 21, 23] + list(range(24, 31)))
+
+    objStep0013Rows: List[List[str]] = remove_columns_by_1_based_indices(objInputRows, objExcludedColumns)
+    objStep0013NontaxCommuteRows: List[List[str]] = select_columns_by_1_based_indices(
+        objInputRows,
+        objNontaxCommuteColumns,
+    )
+    objStep0013StatutoryWelfareRows: List[List[str]] = select_columns_by_1_based_indices(
+        objInputRows,
+        objStatutoryWelfareColumns,
+    )
+
+    objStep0013Path: Path = build_new_rawdata_step0013_output_path_from_step0012(objNewRawdataStep0012Path)
+    objStep0013NontaxCommutePath: Path = build_new_rawdata_step0013_nontax_commute_output_path_from_step0012(
+        objNewRawdataStep0012Path
+    )
+    objStep0013StatutoryWelfarePath: Path = build_new_rawdata_step0013_statutory_welfare_output_path_from_step0012(
+        objNewRawdataStep0012Path
+    )
+
+    write_sheet_to_tsv(objStep0013Path, objStep0013Rows)
+    write_sheet_to_tsv(objStep0013NontaxCommutePath, objStep0013NontaxCommuteRows)
+    write_sheet_to_tsv(objStep0013StatutoryWelfarePath, objStep0013StatutoryWelfareRows)
+    process_new_rawdata_step0014_statutory_welfare_from_step0013_statutory_welfare(objStep0013StatutoryWelfarePath)
+    return 0
+
+
+def build_new_rawdata_step0014_statutory_welfare_output_path_from_step0013_statutory_welfare(
+    objStep0013StatutoryWelfarePath: Path,
+) -> Path:
+    pszFileName: str = objStep0013StatutoryWelfarePath.name
+    if "_step0013_法定福利費_" not in pszFileName:
+        raise ValueError(f"Input is not step0013 statutory welfare file: {objStep0013StatutoryWelfarePath}")
+    pszOutputFileName: str = pszFileName.replace("_step0013_法定福利費_", "_step0014_法定福利費_", 1)
+    return objStep0013StatutoryWelfarePath.resolve().parent / pszOutputFileName
+
+
+def process_new_rawdata_step0014_statutory_welfare_from_step0013_statutory_welfare(
+    objStep0013StatutoryWelfarePath: Path,
+) -> int:
+    objInputRows: List[List[str]] = read_tsv_rows(objStep0013StatutoryWelfarePath)
+    if not objInputRows:
+        raise ValueError(f"Input TSV has no rows: {objStep0013StatutoryWelfarePath}")
+
+    objOutputRows: List[List[str]] = []
+    for iRowIndex, objRow in enumerate(objInputRows):
+        objNewRow: List[str] = list(objRow)
+        while len(objNewRow) < 12:
+            objNewRow.append("")
+
+        pszTotalLegalWelfare: str = ""
+        if iRowIndex == 0:
+            pszTotalLegalWelfare = "法定福利費"
+        else:
+            pszStaffName: str = (objNewRow[3] or "").strip()
+            pszProjectName: str = (objNewRow[4] or "").strip()
+            if pszStaffName != "" and pszProjectName == "合計":
+                objTotal: Decimal = Decimal("0")
+                for iColumnIndex in range(5, 12):
+                    objValue: Decimal | None = parse_decimal_text(objNewRow[iColumnIndex] if iColumnIndex < len(objNewRow) else "")
+                    if objValue is not None:
+                        objTotal += objValue
+                iFlooredTotal: int = int(objTotal.to_integral_value(rounding=ROUND_FLOOR))
+                pszTotalLegalWelfare = str(iFlooredTotal)
+
+        objNewRow.insert(12, pszTotalLegalWelfare)
+        objOutputRows.append(objNewRow)
+
+    objOutputPath: Path = build_new_rawdata_step0014_statutory_welfare_output_path_from_step0013_statutory_welfare(
+        objStep0013StatutoryWelfarePath
+    )
+    write_sheet_to_tsv(objOutputPath, objOutputRows)
+    return 0
+
+
+def process_new_rawdata_step0012_and_step0013_from_step0011(
+    objNewRawdataStep0011Path: Path,
+) -> int:
+    process_new_rawdata_step0012_from_step0011(objNewRawdataStep0011Path)
+    process_new_rawdata_step0013_from_step0012(
+        build_new_rawdata_step0012_output_path_from_step0011(objNewRawdataStep0011Path)
+    )
+    return 0
+
+
 def process_new_rawdata_step0011_and_step0012_from_step0010(
     objNewRawdataStep0010Path: Path,
 ) -> int:
     process_new_rawdata_step0011_from_step0010(objNewRawdataStep0010Path)
-    process_new_rawdata_step0012_from_step0011(
-        build_new_rawdata_step0011_output_path_from_step0010(objNewRawdataStep0010Path)
+    objNewRawdataStep0011Path: Path = build_new_rawdata_step0011_output_path_from_step0010(objNewRawdataStep0010Path)
+    process_new_rawdata_step0012_from_step0011(objNewRawdataStep0011Path)
+    process_new_rawdata_step0013_from_step0012(
+        build_new_rawdata_step0012_output_path_from_step0011(objNewRawdataStep0011Path)
     )
     return 0
 
@@ -1841,7 +1988,7 @@ def main() -> int:
             if objNewRawdataStep0011Path.resolve() in objHandledInputPaths:
                 continue
             try:
-                process_new_rawdata_step0012_from_step0011(objNewRawdataStep0011Path)
+                process_new_rawdata_step0012_and_step0013_from_step0011(objNewRawdataStep0011Path)
                 objHandledInputPaths.add(objNewRawdataStep0011Path.resolve())
             except Exception as objException:
                 print(

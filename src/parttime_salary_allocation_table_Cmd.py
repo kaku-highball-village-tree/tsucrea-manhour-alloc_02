@@ -12,6 +12,7 @@ INVALID_FILE_CHARS_PATTERN: re.Pattern[str] = re.compile(r'[\\/:*?"<>|]')
 YEAR_MONTH_PATTERN: re.Pattern[str] = re.compile(r"(\d{2})\.(\d{1,2})月")
 DURATION_TEXT_PATTERN: re.Pattern[str] = re.compile(r"^\s*(\d+)\s+day(?:s)?,\s*(\d+):(\d{2}):(\d{2})\s*$")
 TIME_TEXT_PATTERN: re.Pattern[str] = re.compile(r"^\d+:\d{2}:\d{2}$")
+HM_PATTERN: re.Pattern[str] = re.compile(r"^(\d+):(\d{2})$")
 SALARY_PAYMENT_STEP0001_FILE_PATTERN: re.Pattern[str] = re.compile(r"^支給・控除等一覧表_給与_step0001_.+\.tsv$")
 NEW_RAWDATA_STEP0001_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0001_\d{4}年\d{2}月\.tsv$")
 NEW_RAWDATA_STEP0002_FILE_PATTERN: re.Pattern[str] = re.compile(r"^新_ローデータ_シート_step0002_\d{4}年\d{2}月\.tsv$")
@@ -793,6 +794,43 @@ def process_new_rawdata_step0002_from_salary_and_new_rawdata_step0001(
     return 0
 
 
+def is_fourth_column_manhour_h_mm_tsv(objRows: List[List[str]]) -> bool:
+    objNonEmptyRows: List[List[str]] = [
+        objRow for objRow in objRows if any(not is_blank_text(pszCell) for pszCell in objRow)
+    ]
+    if not objNonEmptyRows:
+        return False
+
+    iTotal: int = len(objNonEmptyRows)
+    iHmRows: int = 0
+    for objRow in objNonEmptyRows:
+        if len(objRow) < 4:
+            continue
+        pszTimeText: str = (objRow[3] or "").strip()
+        if HM_PATTERN.match(pszTimeText) is not None:
+            iHmRows += 1
+    return iHmRows / iTotal >= 0.5
+
+
+def build_h_mm_ss_output_path_from_input_tsv(objInputPath: Path) -> Path:
+    return objInputPath.resolve().with_name(f"{objInputPath.stem}_h_mm_ss.tsv")
+
+
+def convert_manhour_h_mm_to_h_mm_ss_rows(objRows: List[List[str]]) -> List[List[str]]:
+    objConvertedRows: List[List[str]] = []
+    for objRow in objRows:
+        objNewRow: List[str] = list(objRow)
+        if len(objNewRow) >= 4:
+            pszManhour: str = (objNewRow[3] or "").strip()
+            objMatch = HM_PATTERN.match(pszManhour)
+            if objMatch is not None:
+                iHours: int = int(objMatch.group(1))
+                iMinutes: int = int(objMatch.group(2))
+                objNewRow[3] = f"{iHours}:{iMinutes:02d}:00"
+        objConvertedRows.append(objNewRow)
+    return objConvertedRows
+
+
 def process_tsv_input(objResolvedInputPath: Path) -> int:
     objRows: List[List[str]] = read_tsv_rows(objResolvedInputPath)
     if len(objRows) < 2:
@@ -800,6 +838,12 @@ def process_tsv_input(objResolvedInputPath: Path) -> int:
 
     if is_jobcan_long_format_tsv(objRows):
         return process_jobcan_long_tsv_input(objResolvedInputPath, objRows)
+
+    if is_fourth_column_manhour_h_mm_tsv(objRows):
+        objOutputPath: Path = build_h_mm_ss_output_path_from_input_tsv(objResolvedInputPath)
+        objConvertedRows: List[List[str]] = convert_manhour_h_mm_to_h_mm_ss_rows(objRows)
+        write_sheet_to_tsv(objOutputPath, objConvertedRows)
+        return 0
 
     if is_salary_payment_deduction_list_tsv(objRows):
         raise ValueError(f"Salary payment/deduction list TSV is not supported yet: {objResolvedInputPath}")
