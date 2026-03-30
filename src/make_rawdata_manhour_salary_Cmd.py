@@ -967,6 +967,25 @@ def select_columns_by_1_based_indices(objRows: List[List[str]], objIndices: List
     return objOutputRows
 
 
+def build_header_index_map(objHeaderRow: List[str]) -> dict[str, int]:
+    objIndexMap: dict[str, int] = {}
+    for iIndex, pszHeader in enumerate(objHeaderRow):
+        pszKey: str = (pszHeader or "").strip()
+        if pszKey == "":
+            continue
+        if pszKey not in objIndexMap:
+            objIndexMap[pszKey] = iIndex
+    return objIndexMap
+
+
+def get_required_header_indices(objHeaderRow: List[str], objRequiredHeaders: List[str]) -> List[int]:
+    objIndexMap: dict[str, int] = build_header_index_map(objHeaderRow)
+    objMissingHeaders: List[str] = [pszHeader for pszHeader in objRequiredHeaders if pszHeader not in objIndexMap]
+    if objMissingHeaders:
+        raise ValueError(f"Missing required headers: {', '.join(objMissingHeaders)}")
+    return [objIndexMap[pszHeader] for pszHeader in objRequiredHeaders]
+
+
 def remove_columns_by_1_based_indices(objRows: List[List[str]], objExcludedIndices: set[int]) -> List[List[str]]:
     objOutputRows: List[List[str]] = []
     for objRow in objRows:
@@ -986,8 +1005,28 @@ def process_new_rawdata_step0013_from_step0012(
         raise ValueError(f"Input TSV has no rows: {objNewRawdataStep0012Path}")
 
     objNontaxCommuteColumns: List[int] = [1, 2, 3, 4, 5, 9]
-    objStatutoryWelfareColumns: List[int] = [1, 2, 3, 4, 5, 6, 24, 25, 26, 27, 28, 29, 30]
     objExcludedColumns: set[int] = set([8, 9, 21, 23] + list(range(24, 31)))
+    objStep0012HeaderRow: List[str] = [("" if objCell is None else str(objCell)).strip() for objCell in objInputRows[0]]
+    objStatutoryWelfareHeaderNames: List[str] = [
+        "スタッフ昇順",
+        "スタッフコード(先頭)",
+        "スタッフコード",
+        "氏名",
+        "プロジェクト名",
+        "工数",
+        "健保事業主負担",
+        "介護事業主負担",
+        "厚年事業主負担",
+        "雇保事業主負担",
+        "労災保険料",
+        "一般拠出金",
+        "子育拠出金",
+    ]
+    objStatutoryWelfareIndices0: List[int] = get_required_header_indices(
+        objStep0012HeaderRow,
+        objStatutoryWelfareHeaderNames,
+    )
+    objStatutoryWelfareColumns: List[int] = [iIndex + 1 for iIndex in objStatutoryWelfareIndices0]
 
     objStep0013Rows: List[List[str]] = remove_columns_by_1_based_indices(objInputRows, objExcludedColumns)
     objStep0013NontaxCommuteRows: List[List[str]] = select_columns_by_1_based_indices(
@@ -1031,28 +1070,46 @@ def process_new_rawdata_step0014_statutory_welfare_from_step0013_statutory_welfa
     if not objInputRows:
         raise ValueError(f"Input TSV has no rows: {objStep0013StatutoryWelfarePath}")
 
+    objHeaderRow: List[str] = [("" if objCell is None else str(objCell)).strip() for objCell in objInputRows[0]]
+    objWelfareHeaderNames: List[str] = [
+        "健保事業主負担",
+        "介護事業主負担",
+        "厚年事業主負担",
+        "雇保事業主負担",
+        "労災保険料",
+        "一般拠出金",
+        "子育拠出金",
+    ]
+    objRequiredHeaderNames: List[str] = ["氏名", "プロジェクト名"] + objWelfareHeaderNames
+    objRequiredIndices: List[int] = get_required_header_indices(objHeaderRow, objRequiredHeaderNames)
+    iStaffNameIndex: int = objRequiredIndices[0]
+    iProjectNameIndex: int = objRequiredIndices[1]
+    objWelfareIndices: List[int] = objRequiredIndices[2:]
+    iChildcareContributionIndex: int = objWelfareIndices[-1]
+    iInsertIndex: int = iChildcareContributionIndex + 1
+
     objOutputRows: List[List[str]] = []
     for iRowIndex, objRow in enumerate(objInputRows):
         objNewRow: List[str] = list(objRow)
-        while len(objNewRow) < 12:
+        while len(objNewRow) < iInsertIndex:
             objNewRow.append("")
 
         pszTotalLegalWelfare: str = ""
         if iRowIndex == 0:
             pszTotalLegalWelfare = "法定福利費"
         else:
-            pszStaffName: str = (objNewRow[3] or "").strip()
-            pszProjectName: str = (objNewRow[4] or "").strip()
+            pszStaffName: str = (objNewRow[iStaffNameIndex] or "").strip() if iStaffNameIndex < len(objNewRow) else ""
+            pszProjectName: str = (objNewRow[iProjectNameIndex] or "").strip() if iProjectNameIndex < len(objNewRow) else ""
             if pszStaffName != "" and pszProjectName == "合計":
                 objTotal: Decimal = Decimal("0")
-                for iColumnIndex in range(5, 12):
+                for iColumnIndex in objWelfareIndices:
                     objValue: Decimal | None = parse_decimal_text(objNewRow[iColumnIndex] if iColumnIndex < len(objNewRow) else "")
                     if objValue is not None:
                         objTotal += objValue
                 iFlooredTotal: int = int(objTotal.to_integral_value(rounding=ROUND_FLOOR))
                 pszTotalLegalWelfare = str(iFlooredTotal)
 
-        objNewRow.insert(12, pszTotalLegalWelfare)
+        objNewRow.insert(iInsertIndex, pszTotalLegalWelfare)
         objOutputRows.append(objNewRow)
 
     objOutputPath: Path = build_new_rawdata_step0014_statutory_welfare_output_path_from_step0013_statutory_welfare(
